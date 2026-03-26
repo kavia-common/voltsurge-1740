@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>VoltSurge — Energy Analytics & Anomaly Alerts</title>
+    <meta
+      name="description"
+      content="Upload electricity usage CSVs, normalize units to kWh, detect anomalies (>20% above baseline), and visualize dashboards."
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <!-- Chart.js via CDN (no build step). -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  </head>
+
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="app-header">
+      <div class="container header-row">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">VS</div>
+          <div>
+            <h1 class="brand-title">VoltSurge</h1>
+            <p class="brand-subtitle">Commercial Energy Consumption Analytics & Anomaly Alerts</p>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <button id="btnReset" class="btn btn-ghost" type="button" title="Reset UI state">
+            Reset
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main id="main" class="container">
+      <section class="panel" aria-labelledby="connectionTitle">
+        <div class="panel-header">
+          <h2 id="connectionTitle">Backend connection</h2>
+          <p class="muted">
+            By default, VoltSurge expects the backend at <code>http://localhost:8000</code>.
+          </p>
+        </div>
+
+        <div class="grid grid-2">
+          <div class="field">
+            <label for="apiBaseUrl">API base URL</label>
+            <input
+              id="apiBaseUrl"
+              name="apiBaseUrl"
+              type="url"
+              inputmode="url"
+              placeholder="http://localhost:8000"
+              value="http://localhost:8000"
+              autocomplete="off"
+            />
+            <div class="help">
+              Tip: if you run FastAPI on a different host/port, update this value.
+            </div>
+          </div>
+
+          <div class="field">
+            <label>&nbsp;</label>
+            <div class="row">
+              <button id="btnHealth" class="btn btn-secondary" type="button">
+                Test connection
+              </button>
+              <span id="healthPill" class="pill pill-neutral" role="status" aria-live="polite">
+                Not tested
+              </span>
+            </div>
+            <div class="help">
+              This calls <code>GET /health</code>.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="uploadTitle">
+        <div class="panel-header">
+          <h2 id="uploadTitle">1) Upload CSV</h2>
+          <p class="muted">
+            Choose a CSV file, then map your columns (timestamp, energy, unit) and upload for
+            processing.
+          </p>
+        </div>
+
+        <div class="grid grid-2">
+          <div class="field">
+            <label for="csvFile">CSV file</label>
+            <input id="csvFile" name="csvFile" type="file" accept=".csv,text/csv" />
+            <div class="help">
+              Backend requires the filename to end with <code>.csv</code>.
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="delimiter">Delimiter (for preview)</label>
+            <select id="delimiter" name="delimiter">
+              <option value="," selected>Comma (,)</option>
+              <option value=";">Semicolon (;)</option>
+              <option value="\t">Tab (\t)</option>
+            </select>
+            <div class="help">
+              Used only for the local preview header parsing (upload uses the raw file).
+            </div>
+          </div>
+        </div>
+
+        <div class="preview-wrap" aria-live="polite">
+          <div class="preview-header">
+            <h3 class="h3">Detected headers</h3>
+            <span id="headersCount" class="muted">No file selected</span>
+          </div>
+          <div id="headersList" class="chips" aria-label="Detected CSV headers"></div>
+        </div>
+
+        <div class="divider" role="separator" aria-hidden="true"></div>
+
+        <div class="panel-subheader">
+          <h3 class="h3">2) Map columns</h3>
+          <p class="muted">
+            Map your CSV headers to the backend’s expected fields. This will be sent as query params
+            to <code>POST /upload</code>.
+          </p>
+        </div>
+
+        <div class="grid grid-3">
+          <div class="field">
+            <label for="timestampCol">Timestamp column</label>
+            <select id="timestampCol" name="timestampCol" disabled></select>
+            <div class="help">Examples: <code>timestamp</code>, <code>DateTime</code></div>
+          </div>
+
+          <div class="field">
+            <label for="energyCol">Energy column</label>
+            <select id="energyCol" name="energyCol" disabled></select>
+            <div class="help">Examples: <code>energy</code>, <code>Usage</code></div>
+          </div>
+
+          <div class="field">
+            <label for="unitCol">Unit column</label>
+            <select id="unitCol" name="unitCol" disabled></select>
+            <div class="help">
+              Supported by backend: kWh / Wh / MWh (common variations allowed)
+            </div>
+          </div>
+        </div>
+
+        <div class="row row-space">
+          <button id="btnUpload" class="btn btn-primary" type="button" disabled>
+            Upload & Process
+          </button>
+          <div id="uploadStatus" class="status" role="status" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="dashboardTitle">
+        <div class="panel-header">
+          <h2 id="dashboardTitle">Dashboard</h2>
+          <p class="muted">
+            Energy values are normalized to kWh. Anomalies are values greater than
+            <code>1.2 × baseline_avg_kwh</code>.
+          </p>
+        </div>
+
+        <div class="grid grid-3">
+          <div class="stat">
+            <div class="stat-label">Session</div>
+            <div id="statSession" class="stat-value">—</div>
+            <div id="statCreated" class="stat-sub">—</div>
+          </div>
+
+          <div class="stat">
+            <div class="stat-label">Baseline avg (kWh)</div>
+            <div id="statBaseline" class="stat-value">—</div>
+            <div class="stat-sub">Used for anomaly threshold</div>
+          </div>
+
+          <div class="stat">
+            <div class="stat-label">Anomalies</div>
+            <div id="statAnomalies" class="stat-value">—</div>
+            <div id="statThreshold" class="stat-sub">—</div>
+          </div>
+        </div>
+
+        <div class="grid grid-4 stats-row">
+          <div class="stat small">
+            <div class="stat-label">Rows received</div>
+            <div id="statRowsReceived" class="stat-value">—</div>
+          </div>
+          <div class="stat small">
+            <div class="stat-label">Rows cleaned</div>
+            <div id="statRowsCleaned" class="stat-value">—</div>
+          </div>
+          <div class="stat small">
+            <div class="stat-label">Total energy (kWh)</div>
+            <div id="statTotal" class="stat-value">—</div>
+          </div>
+          <div class="stat small">
+            <div class="stat-label">Min / Max (kWh)</div>
+            <div id="statMinMax" class="stat-value">—</div>
+          </div>
+        </div>
+
+        <div class="divider" role="separator" aria-hidden="true"></div>
+
+        <div class="grid grid-2">
+          <div>
+            <div class="panel-subheader">
+              <h3 class="h3">Energy trend</h3>
+              <p class="muted">Anomalies are highlighted in red.</p>
+            </div>
+            <div class="chart-card">
+              <canvas id="energyChart" aria-label="Energy trend chart" role="img"></canvas>
+            </div>
+          </div>
+
+          <div>
+            <div class="panel-subheader">
+              <h3 class="h3">Anomaly alerts</h3>
+              <p class="muted">
+                Alerts are derived from <code>GET /sessions/&lt;id&gt;/anomalies</code>.
+              </p>
+            </div>
+
+            <div class="alert-controls row row-space">
+              <button id="btnRefresh" class="btn btn-secondary" type="button" disabled>
+                Refresh from backend
+              </button>
+              <button id="btnClearSession" class="btn btn-danger" type="button" disabled>
+                Clear session
+              </button>
+            </div>
+
+            <div id="alertsEmpty" class="empty muted">
+              Upload a dataset to view anomaly alerts.
+            </div>
+            <ul id="alertsList" class="alerts" aria-label="Anomaly alerts list"></ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="debugTitle">
+        <div class="panel-header">
+          <h2 id="debugTitle">Debug / API responses</h2>
+          <p class="muted">Useful for troubleshooting. You can collapse this section.</p>
+        </div>
+
+        <details>
+          <summary>Show raw JSON</summary>
+          <pre id="debugJson" class="code-block" aria-label="Raw API JSON"></pre>
+        </details>
+      </section>
+
+      <footer class="footer muted">
+        <div>
+          VoltSurge is a local-first demo: in-memory backend sessions only (no DB, no auth).
+        </div>
+      </footer>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
